@@ -1,0 +1,76 @@
+services:
+  marzban:
+    image: gozargah/marzban:latest
+    restart: always
+    env_file: .env
+    network_mode: host
+    volumes:
+      - /var/lib/marzban:/var/lib/marzban
+      # Эту строку можно удалить (она дублирует /var/lib/marzban):
+      # - /var/lib/marzban/logs:/var/lib/marzban-node
+    depends_on:
+      mariadb:
+        condition: service_healthy
+
+  # ДОБАВЬ ЭТОТ БЛОК:
+  caddy:
+    image: caddy:latest
+    restart: always
+    network_mode: host
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - /var/lib/marzban:/var/lib/marzban  # Чтобы Caddy видел сокет
+      - caddy_data:/data
+
+  bot:
+    build:
+      context: /opt/ton-bot
+    restart: always
+    env_file: /opt/ton-bot/.env
+    network_mode: host
+    depends_on:
+      mariadb:
+        condition: service_healthy
+    volumes:
+      - /var/log/bot:/var/log/bot  # Директория для логов бота
+    # Убедиться, что директория создана до запуска контейнера
+    command: sh -c "mkdir -p /var/log/bot && python bot.py"
+
+  mariadb:
+    image: mariadb:lts
+    env_file: .env
+    network_mode: host
+    restart: always
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      MYSQL_ROOT_HOST: '%'
+      MYSQL_DATABASE: ${MYSQL_DATABASE}
+      MYSQL_USER: ${MYSQL_USER}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+    command:
+      - --bind-address=127.0.0.1
+      - --character_set_server=utf8mb4
+      - --collation_server=utf8mb4_unicode_ci
+      - --host-cache-size=0
+      - --innodb-open-files=1024
+      - --innodb-buffer-pool-size=256M
+      - --binlog_expire_logs_seconds=1209600
+      - --innodb-log-file-size=64M
+      - --innodb-log-files-in-group=2
+      - --innodb-doublewrite=0
+      - --general_log=0
+      - --slow_query_log=1
+      - --slow_query_log_file=/var/lib/mysql/slow.log
+      - --long_query_time=2
+    volumes:
+      - /var/lib/marzban/mysql:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      start_period: 10s
+      start_interval: 3s
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+volumes:
+  caddy_data:
