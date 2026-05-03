@@ -1,1 +1,37 @@
-Nothing should be ignored based on the provided file changes. The changes only include source/config files (.md, .py) without any build artifacts, dependencies, or temporary files that would warrant adding ignore rules.
+```
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Logs and temp files
+*.log
+*.tmp
+
+# Environment
+.env
+.env.local
+*.env.*
+
+# Editors
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Dependencies
+.venv/
+venv/
+node_modules/
+
+# Build artifacts
+dist/
+build/
+*.o
+*.obj
+*.so
+*.a
+*.dll
+*.exe
+```

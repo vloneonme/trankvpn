@@ -68,11 +68,11 @@ DB_CONFIG = {
     "autocommit": True
 }
 
-# Структура продуктов (тестовая, базовая, улучшенная)
+# Структура продуктов (тестовый, обычный, безлимит)
 PRODUCTS = {
-    "test": {"name": "🎁 Тестовый период", "days": 3, "gb": 5, "price": 0},
-    "basic": {"name": "📱 Basic", "days": 30, "gb": 50, "price": 290},
-    "premium": {"name": "⭐ Premium", "days": 90, "gb": 200, "price": 790}
+    "test": {"name": "🎁 Тестовый", "days": 3, "gb": 5, "price": 0},
+    "basic": {"name": "📱 Обычный", "days": 30, "gb": 100, "price": 100},
+    "unlimited": {"name": "♾️ Безлимит", "days": 30, "gb": 0, "price": 200}
 }
 
 # --- Глобальные объекты ---
@@ -211,11 +211,13 @@ async def cmd_start(message: types.Message):
         await add_user_to_db(message.from_user.id, message.from_user.username or "Unknown")
         kb = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="💳 Купить подписку", callback_data="buy")],
-            [InlineKeyboardButton(text="🎁 Тестовый период", callback_data="test")],
+            [InlineKeyboardButton(text="📊 Моя подписка", callback_data="status")],
             [InlineKeyboardButton(text="ℹ️ О сервисе", callback_data="about")]
         ])
         await message.answer(
-            "🔒 *VPN Service*\nВыберите действие:",
+            "🔒 *VPN Service*\n\n"
+            "💳 *Оплата принимается в TON или USDT*\n\n"
+            "Выберите действие:",
             parse_mode="Markdown",
             reply_markup=kb
         )
@@ -229,11 +231,18 @@ async def show_products(callback: types.CallbackQuery):
     """Показать доступные тарифы"""
     try:
         kb = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text=f"{PRODUCTS['basic']['name']} - {PRODUCTS['basic']['price']}₽", callback_data="pay_basic")],
-            [InlineKeyboardButton(text=f"{PRODUCTS['premium']['name']} - {PRODUCTS['premium']['price']}₽", callback_data="pay_premium")],
+            [InlineKeyboardButton(text="🎁 Тестовый - 3 дня, 5 ГБ - Бесплатно (1 раз)", callback_data="pay_test")],
+            [InlineKeyboardButton(text="📱 Обычный - 100 ГБ, 30 дней - 100₽", callback_data="pay_basic")],
+            [InlineKeyboardButton(text="♾️ Безлимит - Безлимитный трафик, 30 дней - 200₽", callback_data="pay_unlimited")],
+            [InlineKeyboardButton(text="📊 Моя подписка", callback_data="status")],
             [InlineKeyboardButton(text="« Назад", callback_data="back")]
         ])
-        await callback.message.edit_text("💳 *Выберите тариф:*", parse_mode="Markdown", reply_markup=kb)
+        await callback.message.edit_text(
+            "💳 *Оплата принимается в TON или USDT*\n\n"
+            "Выберите тариф:",
+            parse_mode="Markdown",
+            reply_markup=kb
+        )
         logger.info(f"🛒 Пользователь {callback.from_user.id} просматривает тарифы")
     except Exception as e:
         logger.error(f"❌ Ошибка при показе тарифов для {callback.from_user.id}: {e}", exc_info=True)
@@ -249,7 +258,41 @@ async def process_payment(callback: types.CallbackQuery):
             await callback.answer("❌ Ошибка платежа", show_alert=True)
             return
         
-        pk = parts[1]  # ИСПРАВЛЕНО: было [9], должно быть [1]
+        pk = parts[1]
+        
+        # Тестовый тариф бесплатный, сразу выдаем
+        if pk == "test":
+            user_id = callback.from_user.id
+            is_used = await check_test_used(user_id)
+            
+            if is_used:
+                await callback.answer("❌ Вы уже использовали тестовый период!", show_alert=True)
+                logger.info(f"🚫 Попытка повторного использования теста пользователем {user_id}")
+                return
+            
+            await callback.message.edit_text("⏳ Подготавливаем тестовый период...")
+            logger.info(f"🔄 Создание тестовой подписки для {user_id}")
+            
+            sub_url = await create_vpn_user(user_id, "test")
+            
+            if sub_url:
+                await mark_test_used(user_id)
+                kb = InlineKeyboardMarkup(inline_keyboard=[
+                    [InlineKeyboardButton(text="« В меню", callback_data="back")]
+                ])
+                await callback.message.edit_text(
+                    f"🎁 *Тестовый период активирован!*\n"
+                    f"Период: 3 дня\n"
+                    f"Трафик: 5 GB\n"
+                    f"Ваша ссылка подписки:\n`{sub_url}`",
+                    parse_mode="Markdown",
+                    reply_markup=kb
+                )
+                logger.info(f"✅ Тестовая подписка выдана пользователю {user_id}")
+            else:
+                await callback.message.edit_text("❌ Ошибка при создании подписки. Попробуйте позже.")
+                logger.error(f"❌ Ошибка создания тестовой подписки для {user_id}")
+            return
         
         if pk not in PRODUCTS or PRODUCTS[pk]['price'] == 0:
             logger.error(f"❌ Невозможно оплатить {pk}")
@@ -276,7 +319,10 @@ async def process_payment(callback: types.CallbackQuery):
             [InlineKeyboardButton(text="« Отмена", callback_data="back")]
         ])
         await callback.message.edit_text(
-            f"💎 *{product['name']}*\nСумма: {product['price']}₽",
+            f"💎 *{product['name']}*\n"
+            f"Сумма: {product['price']}₽\n\n"
+            f"Оплата принимается в TON или USDT через CryptoBot.\n"
+            f"Поддержка: @examplesupport",
             parse_mode="Markdown",
             reply_markup=kb
         )
@@ -331,44 +377,6 @@ async def check_payment(callback: types.CallbackQuery):
         logger.error(f"❌ Ошибка в check_payment для {callback.from_user.id}: {e}", exc_info=True)
         await callback.answer("❌ Ошибка при проверке платежа", show_alert=True)
 
-@dp.callback_query(F.data == "test")
-async def test_subscription(callback: types.CallbackQuery):
-    """Выдать тестовую подписку"""
-    try:
-        user_id = callback.from_user.id
-        is_used = await check_test_used(user_id)
-        
-        if is_used:
-            await callback.answer("❌ Вы уже использовали тестовый период!", show_alert=True)
-            logger.info(f"🚫 Попытка повторного использования теста пользователем {user_id}")
-            return
-        
-        await callback.message.edit_text("⏳ Подготавливаем тестовый период...")
-        logger.info(f"🔄 Создание тестовой подписки для {user_id}")
-        
-        sub_url = await create_vpn_user(user_id, "test")
-        
-        if sub_url:
-            await mark_test_used(user_id)
-            kb = InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="« В главное меню", callback_data="back")]
-            ])
-            await callback.message.edit_text(
-                f"🎁 *Тестовый период активирован!*\n"
-                f"Период: 3 дня\n"
-                f"Трафик: 5 GB\n"
-                f"Ваша ссылка подписки:\n`{sub_url}`",
-                parse_mode="Markdown",
-                reply_markup=kb
-            )
-            logger.info(f"✅ Тестовая подписка выдана пользователю {user_id}")
-        else:
-            await callback.message.edit_text("❌ Ошибка при создании подписки. Попробуйте позже.")
-            logger.error(f"❌ Ошибка создания тестовой подписки для {user_id}")
-    except Exception as e:
-        logger.error(f"❌ Ошибка в test_subscription для {callback.from_user.id}: {e}", exc_info=True)
-        await callback.answer("❌ Произошла ошибка", show_alert=True)
-
 @dp.callback_query(F.data == "about")
 async def about(callback: types.CallbackQuery):
     """О сервисе"""
@@ -379,9 +387,12 @@ async def about(callback: types.CallbackQuery):
         await callback.message.edit_text(
             "ℹ️ *О сервисе*\n"
             "• Протокол: VLESS REALITY\n"
-            "• Оплата: CryptoBot (TON, USDT)\n"
-            "• Поддержка: @admin\n"
-            "• Тарифы: Тестовый (3д), Basic (30д), Premium (90д)",
+            "• Оплата: TON, USDT (CryptoBot)\n"
+            "• Поддержка: @examplesupport\n"
+            "• Тарифы:\n"
+            "  - Тестовый: 3 дня, 5 ГБ (бесплатно)\n"
+            "  - Обычный: 30 дней, 100 ГБ (100₽)\n"
+            "  - Безлимит: 30 дней, безлимит (200₽)",
             parse_mode="Markdown",
             reply_markup=kb
         )
@@ -389,18 +400,111 @@ async def about(callback: types.CallbackQuery):
     except Exception as e:
         logger.error(f"❌ Ошибка в about для {callback.from_user.id}: {e}", exc_info=True)
 
+async def get_user_status(tg_id):
+    """Получить статус подписки пользователя из Marzban"""
+    token = await get_marzban_token()
+    if not token:
+        return None
+    
+    async with httpx.AsyncClient(timeout=10) as client:
+        headers = {"Authorization": f"Bearer {token}"}
+        # Ищем пользователя по префиксу telegram_id
+        try:
+            resp = await client.get(f"{MARZBAN_URL}/api/users", params={"limit": 100}, headers=headers)
+            if resp.status_code == 200:
+                users = resp.json().get("users", [])
+                for user in users:
+                    username = user.get("username", "")
+                    note = user.get("note", "")
+                    if str(tg_id) in note or username.startswith(f"tg_{tg_id}_"):
+                        # Нашли пользователя
+                        data_limit = user.get("data_limit", 0)
+                        used_traffic = user.get("used_traffic", 0)
+                        expire = user.get("expire", 0)
+                        
+                        # Вычисляем остаток трафика
+                        if data_limit > 0:
+                            remaining_gb = round((data_limit - used_traffic) / (1024**3), 2)
+                            traffic_str = f"📊 Трафик: {remaining_gb} ГБ из {round(data_limit / (1024**3), 2)} ГБ"
+                        else:
+                            traffic_str = "♾️ Трафик: Безлимитный"
+                        
+                        # Вычисляем время до истечения
+                        if expire and expire > 0:
+                            expire_date = datetime.fromtimestamp(expire)
+                            days_left = (expire_date - datetime.now()).days
+                            if days_left < 0:
+                                time_str = "⏰ Срок действия: Истёк"
+                            else:
+                                time_str = f"⏰ До окончания: {days_left} дн."
+                        else:
+                            time_str = "⏰ Срок действия: Бессрочно"
+                        
+                        sub_url = user.get("subscription_url", "")
+                        if sub_url.startswith('http'):
+                            result_url = sub_url
+                        else:
+                            result_url = f"{SUBSCRIPTION_URL}/sub/{sub_url.lstrip('/')}"
+                        
+                        return {
+                            "traffic": traffic_str,
+                            "time": time_str,
+                            "url": result_url
+                        }
+        except Exception as e:
+            logger.error(f"❌ Ошибка получения статуса пользователя: {e}", exc_info=True)
+    
+    return None
+
+@dp.callback_query(F.data == "status")
+async def check_status(callback: types.CallbackQuery):
+    """Проверить статус подписки"""
+    try:
+        await callback.answer("⏳ Проверяю подписку...")
+        status = await get_user_status(callback.from_user.id)
+        
+        if status:
+            kb = InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="🔗 Ссылка подписки", url=status["url"])],
+                [InlineKeyboardButton(text="« В меню", callback_data="back")]
+            ])
+            await callback.message.edit_text(
+                f"📋 *Ваша подписка:*\n\n"
+                f"{status['traffic']}\n"
+                f"{status['time']}\n\n"
+                f"Используйте ссылку для подключения.",
+                parse_mode="Markdown",
+                reply_markup=kb
+            )
+            logger.info(f"📊 Пользователь {callback.from_user.id} проверил статус подписки")
+        else:
+            kb = InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="💳 Купить подписку", callback_data="buy")],
+                [InlineKeyboardButton(text="« В меню", callback_data="back")]
+            ])
+            await callback.message.edit_text(
+                "❌ Активная подписка не найдена.\nПриобретите подписку в меню.",
+                parse_mode="Markdown",
+                reply_markup=kb
+            )
+            logger.info(f"📊 Пользователь {callback.from_user.id} не имеет активной подписки")
+    except Exception as e:
+        logger.error(f"❌ Ошибка в check_status для {callback.from_user.id}: {e}", exc_info=True)
+        await callback.answer("❌ Ошибка при проверке статуса", show_alert=True)
+
 @dp.callback_query(F.data == "back")
 async def back(callback: types.CallbackQuery):
     """Вернуться в главное меню"""
     try:
-        # ИСПРАВЛЕНО: было callback.message, теперь используем types.Message
         kb = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="💳 Купить подписку", callback_data="buy")],
-            [InlineKeyboardButton(text="🎁 Тестовый период", callback_data="test")],
+            [InlineKeyboardButton(text="📊 Моя подписка", callback_data="status")],
             [InlineKeyboardButton(text="ℹ️ О сервисе", callback_data="about")]
         ])
         await callback.message.edit_text(
-            "🔒 *VPN Service*\nВыберите действие:",
+            "🔒 *VPN Service*\n\n"
+            "💳 *Оплата принимается в TON или USDT*\n\n"
+            "Выберите действие:",
             parse_mode="Markdown",
             reply_markup=kb
         )
