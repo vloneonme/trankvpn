@@ -20,6 +20,13 @@ load_dotenv()
 LOG_DIR = Path('/var/log/bot')
 try:
     LOG_DIR.mkdir(parents=True, exist_ok=True)
+    # Проверяем, что директория действительно существует и доступна для записи
+    if not LOG_DIR.exists():
+        raise PermissionError(f"Директория {LOG_DIR} не существует после попытки создания")
+    # Пробуем создать тестовый файл для проверки прав доступа
+    test_file = LOG_DIR / '.write_test'
+    test_file.touch()
+    test_file.unlink()
 except Exception as e:
     print(f"⚠️  Не удалось создать директорию логов: {e}")
     # Используем текущую директорию как fallback
@@ -27,12 +34,12 @@ except Exception as e:
 
 LOG_FILE = LOG_DIR / 'bot.log'
 
-# Настройка логирования
+# Настройка логирования - используем delay=True для отложенного открытия файла
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.FileHandler(str(LOG_FILE)),
+        logging.FileHandler(str(LOG_FILE), delay=True),
         logging.StreamHandler()
     ]
 )
@@ -176,7 +183,7 @@ async def create_vpn_user(tg_id, product_key):
             "data_limit": product['gb'] * 1024**3,
             "expire": expiry,
             "inbounds": {INBOUND_TAG: [INBOUND_TAG]},
-            "proxies": {"vless": {"flow": "xtls-rprx-vision"}},
+            "proxies": {"vless": {"flow": "xtls-rprx-vision", "id": ""}},
             "note": f"TG:{tg_id} Plan:{product_key}"
         }
         try:
