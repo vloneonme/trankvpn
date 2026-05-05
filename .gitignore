@@ -1,37 +1,42 @@
 ```
-# Python
+# Dependencies
 __pycache__/
 *.pyc
 *.pyo
 *.pyd
-
-# Logs and temp files
-*.log
-*.tmp
-
-# Environment
+.venv/
+venv/
+env/
 .env
 .env.local
-*.env.*
+.env.*
 
-# Editors
-.vscode/
-.idea/
+# Docker
+docker/.env
+
+# Logs
+*.log
+
+# Temporary files
+*.tmp
 *.swp
 *.swo
 
-# Dependencies
-.venv/
-venv/
-node_modules/
+# OS generated files
+.DS_Store
+Thumbs.db
+
+# Coverage reports
+coverage/
+htmlcov/
+.coverage
+
+# IDE
+.vscode/
+.idea/
 
 # Build artifacts
 dist/
 build/
-*.o
-*.obj
-*.so
-*.a
-*.dll
-*.exe
+target/
 ```
