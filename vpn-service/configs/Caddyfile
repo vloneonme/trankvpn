@@ -1,0 +1,10 @@
+# Caddy конфигурация для VPN сервиса
+
+your-domain.com {
+    reverse_proxy /proxy/* vpn-web:8080
+}
+
+# Для локальной сети (если нужно)
+localhost {
+    reverse_proxy /proxy/* vpn-web:8080
+}
