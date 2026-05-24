@@ -109,7 +109,7 @@
         state: directory
         mode: '0755'
 
-    - name: Исправить права на SSH-ключ (должно быть 600, иначе SSH игнорирует)
+    - name: Права на ключ ssh
       file:
         path: /root/.ssh/id_rsa
         mode: '0600'
