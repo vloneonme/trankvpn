@@ -1,0 +1,33 @@
+# TrankVPN Caddy конфигурация
+# Замените your-domain.com на ваш реальный домен
+
+{
+    email admin@your-domain.com
+}
+
+your-domain.com {
+    # Веб-приложение (инструкции, статус)
+    reverse_proxy /app/* vpn-web:8080
+
+    # API для веб-приложения
+    reverse_proxy /api/* vpn-web:8080
+
+    # Главная страница
+    reverse_proxy vpn-web:8080
+
+    # Безопасные заголовки
+    header {
+        X-Frame-Options DENY
+        X-Content-Type-Options nosniff
+        Referrer-Policy no-referrer-when-downgrade
+        -Server
+    }
+
+    # Логи доступа
+    log {
+        output file /var/log/caddy/access.log {
+            roll_size 10mb
+            roll_keep 5
+        }
+    }
+}

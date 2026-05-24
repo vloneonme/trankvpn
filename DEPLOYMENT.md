@@ -1,219 +1,170 @@
-# 🚀 Развертывание на dev-nl1
+# 🚀 VPN Service - Полная инструкция по развертыванию
 
-## 📋 Структура на удаленном сервере
+## 📋 Структура проекта
 
 ```
-/opt/marzban/
-├── Caddyfile
-├── Caddyfile.old
-├── docker-compose.yml
-└── docker-compose.yml.base
-
-/opt/ton-bot/
-├── bot.py
-├── Dockerfile
-├── requirements.txt
-├── .env (не в версионном контроле)
-└── [NEW] README.md, CHANGELOG.md, и т.д.
+vpn-service/
+├── bot/              # Telegram бот
+├── web/              # Web-приложение для MTProto
+├── worker/           # Фоновые задачи
+├── shared/           # Общие модули (шифрование, БД)
+├── docker/           # Docker Compose конфигурация
+├── ansible/          # Playbook для автоматизации
+├── configs/          # Конфигурации (Caddy и др.)
+└── scripts/          # Скрипты обслуживания
 ```
 
-## 🔄 Способ 1: Автоматическая синхронизация (через SCP)
+## 🔧 Быстрый старт (локально)
 
-### Шаг 1: Синхронизация файлов с локального машины
-
-На локальной машине (где находится этот репозиторий):
+### 1. Клонирование и настройка
 
 ```bash
-cd /home/vlone/trankvpn
-./sync-to-remote-scp.sh
-```
+cd /opt
+git clone <your-repo-url> vpn-service
+cd vpn-service/docker
 
-Скрипт скопирует все файлы на сервер, новые конфиги будут с суффиксом `.new`.
-
-### Шаг 2: Проверка и замена файлов на сервере
-
-Подключитесь к серверу:
-
-```bash
-ssh zxc@dev-nl1
-```
-
-Проверьте скопированные файлы:
-
-```bash
-ls -lh /opt/marzban/*.new
-ls -lh /opt/ton-bot/
-```
-
-Если всё выглядит хорошо, сделайте резервные копии и замените файлы:
-
-```bash
-# Для Marzban
-cd /opt/marzban
-cp Caddyfile Caddyfile.old
-mv Caddyfile.new Caddyfile
-cp docker-compose.yml docker-compose.yml.old.$(date +%s)
-mv docker-compose.yml.new docker-compose.yml
-```
-
-### Шаг 3: Обновление .env файла
-
-Bot нуждается в файле `.env`. Если он еще не создан:
-
-```bash
-cd /opt/ton-bot
+# Скопируйте пример .env и заполните его
 cp .env.example .env
-nano .env
-# Отредактируйте с вашими параметрами
+nano .env  # Отредактируйте переменные
 ```
 
-### Шаг 4: Перезагрузка сервисов
+### 2. Запуск всех сервисов
 
 ```bash
-cd /opt/marzban
-docker-compose down
-docker-compose up -d
-
-# Проверьте, что всё запустилось
-docker-compose ps
-
-# Смотрите логи бота
-docker-compose logs -f bot
+docker compose up -d --build
 ```
 
-## 🔄 Способ 2: Ручная синхронизация через SCP
-
-Если скрипт не работает, скопируйте файлы вручную:
-
-### Bot файлы
-```bash
-# С локальной машины
-scp ton-bot/bot.py zxc@dev-nl1:/opt/ton-bot/
-scp ton-bot/requirements.txt zxc@dev-nl1:/opt/ton-bot/
-scp ton-bot/Dockerfile zxc@dev-nl1:/opt/ton-bot/
-scp ton-bot/.env.example zxc@dev-nl1:/opt/ton-bot/
-scp ton-bot/README.md zxc@dev-nl1:/opt/ton-bot/
-scp ton-bot/CHANGELOG.md zxc@dev-nl1:/opt/ton-bot/
-scp ton-bot/SUMMARY.md zxc@dev-nl1:/opt/ton-bot/
-scp ton-bot/check-config.sh zxc@dev-nl1:/opt/ton-bot/
-scp ton-bot/deploy.sh zxc@dev-nl1:/opt/ton-bot/
-
-# Установить права
-ssh zxc@dev-nl1 "chmod +x /opt/ton-bot/check-config.sh /opt/ton-bot/deploy.sh"
-```
-
-### Marzban файлы
-```bash
-scp marzban/Caddyfile zxc@dev-nl1:/opt/marzban/Caddyfile.new
-scp marzban/docker-compose.yml zxc@dev-nl1:/opt/marzban/docker-compose.yml.new
-```
-
-## ✅ Проверка после развертывания
-
-После перезагрузки проверьте:
+### 3. Проверка статуса
 
 ```bash
-# 1. Бот работает
-docker-compose ps
-# STATUS должен быть "Up"
-
-# 2. Логи показывают успешный запуск
-docker-compose logs bot | tail -20
-# Ищите:
-#   ✅ Подключение к БД установлено
-#   ✅ Таблица bot_users готова
-#   🚀 Запуск VPN бота
-
-# 3. Бот отвечает на команды
-docker-compose exec bot python -c "print('✅ Python работает')"
-
-# 4. Проверьте конфигурацию
-docker-compose exec -w /app bot bash /app/check-config.sh
+docker compose ps
+docker compose logs -f bot
 ```
 
-## 🆘 Откат на предыдущую версию
+## 🌐 Развертывание на сервере через Ansible
 
-Если что-то не работает:
+### Требования
+- Ubuntu 22.04+ на целевом сервере
+- Ansible на машине управления
+- SSH доступ к серверу
+
+### 1. Настройка inventory
+
+Создайте файл `ansible/inventory.ini`:
+```ini
+[vpn_servers]
+your.server.ip ansible_user=root ansible_ssh_private_key_file=~/.ssh/id_rsa
+```
+
+### 2. Запуск playbook
 
 ```bash
-cd /opt/marzban
-
-# Верните старые файлы
-cp Caddyfile.old Caddyfile
-cp docker-compose.yml.old docker-compose.yml
-
-# Перезагрузитесь
-docker-compose down
-docker-compose up -d
-
-# Смотрите логи
-docker-compose logs -f bot
+cd ansible
+ansible-playbook -i inventory.ini deploy.yml \
+  -e "repo_url=https://github.com/yourusername/vpn-service.git"
 ```
 
-## 📝 Отличия между старым и новым ботом
+## 🔐 Генерация ключей
 
-| Аспект | Старый | Новый |
-|--------|--------|-------|
-| Синтаксические ошибки | ❌ Есть ([3], [4]) | ✅ Исправлены |
-| Логирование | Минимальное | Полное (файл + консоль) |
-| Обработка ошибок | Плохая | Везде try-except |
-| Тестовая подписка | Не работает | ✅ Работает |
-| Платежи | Баги | ✅ Исправлены |
-| Документация | Нет | ✅ 5 файлов |
-
-## 🎯 Что дальше
-
-После успешного развертывания:
-
-1. **Протестируйте бота**:
-   - Отправьте `/start` боту
-   - Проверьте "Тестовый период"
-   - Проверьте меню "Купить подписку"
-
-2. **Мониторьте логи**:
-   - `docker-compose logs -f bot` - следить за ошибками
-   - `/var/log/bot/bot.log` - перманентные логи
-
-3. **Обновляйте параметры**:
-   - Цены в `.env` файле
-   - Размеры тарифов
-   - Описания продуктов
-
-## 🆘 Если что-то не работает
-
-### Проблема: "Ошибка при подключении к Marzban"
 ```bash
-# Проверьте, что Marzban доступен
-docker-compose ps | grep marzban
-# Должен быть "Up"
+# Ключ шифрования
+openssl rand -base64 32
 
-# Проверьте .env файл
-grep MARZBAN /opt/ton-bot/.env
+# Пароли для БД
+openssl rand -base64 24
 ```
 
-### Проблема: "Ошибка при подключении к БД"
+## 📊 Мониторинг
+
+### Логи
 ```bash
-# Проверьте MariaDB
-docker-compose ps | grep mariadb
-# Должен быть "Up"
+# Бот
+docker logs -f vpn-bot
 
-# Проверьте учетные данные в .env
-grep DB_ /opt/ton-bot/.env
+# Web
+docker logs -f vpn-web
+
+# Worker
+docker logs -f vpn-worker
 ```
 
-### Проблема: Логи не записываются
+### Статус сервисов
 ```bash
-# Создайте директорию для логов
-sudo mkdir -p /var/log/bot
-sudo chmod 755 /var/log/bot
-
-# Перезагрузите бота
-docker-compose restart bot
+docker compose ps
+docker stats
 ```
 
-## 📞 Контакт и поддержка
+## 🔄 Обновление
 
-Если у вас возникли вопросы, проверьте:
-1. [README.md](ton-bot/README.md) - подробная документация
-2. [CHANGELOG.md](ton-bot/CHANGELOG.md) - что изменилось
-3. [SUMMARY.md](ton-bot/SUMMARY.md) - краткая справка
+```bash
+cd /opt/vpn-service
+git pull
+docker compose up -d --build
+```
+
+## 💾 Резервное копирование
+
+Автоматический бэкап настроен через cron (ежедневно в 3:00):
+```bash
+/opt/vpn-service/scripts/backup.sh
+```
+
+Ручной бэкап:
+```bash
+./scripts/backup.sh
+```
+
+Восстановление из бэкапа:
+```bash
+# БД
+cat backup.sql | docker exec -i vpn-mariadb mysql -u root -pPASSWORD vpn_service
+```
+
+## 🛡 Безопасность
+
+1. **Шифрование**: Все подписки шифруются AES-256-GCM
+2. **Временные прокси**: MTProto действует 5 минут
+3. **Привязка**: Подписки привязаны к device fingerprint
+4. **Минимализм**: Пользователь видит только кнопку подключения
+
+## 📱 Интеграция с CryptoBot
+
+1. Получите токен в [@CryptoBot](https://t.me/CryptoBot)
+2. Добавьте в `.env`: `CRYPTO_BOT_TOKEN=ваш_токен`
+3. Реализуйте обработку webhook в боте
+
+## 🎯 Массовое использование
+
+### Масштабирование
+- Добавьте балансировщик нагрузки (HAProxy/Nginx)
+- Репликация MariaDB (master-slave)
+- Redis Cluster для сессий
+
+### Производительность
+- Кэширование часто запрашиваемых данных
+- Connection pooling для БД
+- Асинхронные операции везде
+
+## 🆘 Troubleshooting
+
+### Бот не запускается
+```bash
+docker compose logs bot
+# Проверьте BOT_TOKEN в .env
+```
+
+### Ошибка подключения к БД
+```bash
+docker compose exec mariadb mysql -u root -p
+# Проверьте учетные данные
+```
+
+### MTProto не работает
+```bash
+# Проверьте наличие активного сервера MTProto
+# Настройте интеграцию в web/main.py
+```
+
+## 📞 Поддержка
+
+Создайте issue в репозитории или обратитесь к разработчику.
