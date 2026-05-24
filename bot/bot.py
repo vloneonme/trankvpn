@@ -7,6 +7,8 @@ import os
 import asyncio
 import logging
 import datetime
+import base64
+from urllib.parse import quote
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
@@ -104,6 +106,7 @@ def kb_payment(invoice_id: int, pay_url: str) -> InlineKeyboardMarkup:
 
 def kb_vpn() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text='📋 Получить ссылку подписки', callback_data='get_url')],
         [InlineKeyboardButton(text='📱 Как подключиться?', callback_data='howto')],
         [InlineKeyboardButton(text='📊 Статус', callback_data='status')],
         [InlineKeyboardButton(text='« Меню', callback_data='back')],
@@ -393,7 +396,6 @@ async def handle_my_vpn(callback: types.CallbackQuery):
         await callback.message.edit_text(text, parse_mode='Markdown', reply_markup=kb_main(False))
         return
 
-    sub_url = sub.get('subscription_url', '')
     expire = sub['expire_at']
     days = max(0, (expire - datetime.datetime.now()).days)
     plan = PLANS.get(sub['plan_type'], {})
@@ -405,9 +407,7 @@ async def handle_my_vpn(callback: types.CallbackQuery):
         f"Тариф: {plan.get('emoji', '')} {plan.get('name', sub['plan_type'])}\n"
         f"Трафик: {traffic}\n"
         f"Активна ещё: *{days} {_days_word(days)}*\n\n"
-        f"📋 *Ссылка подписки:*\n"
-        f"`{sub_url}`\n\n"
-        f"_Скопируйте ссылку и добавьте в приложение_"
+        f"Нажмите кнопку ниже чтобы получить ссылку подписки для приложения"
     )
     await callback.message.edit_text(text, parse_mode='Markdown', reply_markup=kb_vpn())
 
@@ -457,6 +457,76 @@ async def handle_status(callback: types.CallbackQuery):
         ])
 
     await callback.message.edit_text(text, parse_mode='Markdown', reply_markup=kb)
+
+
+def _app_buttons(sub_url: str) -> InlineKeyboardMarkup:
+    """Кнопки для открытия подписки в конкретных приложениях через deep links"""
+    enc = quote(sub_url, safe='')
+    b64 = base64.b64encode(sub_url.encode()).decode()  # для Shadowrocket
+
+    return InlineKeyboardMarkup(inline_keyboard=[
+        # Android
+        [InlineKeyboardButton(text='━━━ Android ━━━', callback_data='noop')],
+        [
+            InlineKeyboardButton(text='v2rayNG', url=f'v2rayng://install-config?url={enc}'),
+            InlineKeyboardButton(text='Hiddify',  url=f'hiddify://import/{enc}'),
+            InlineKeyboardButton(text='NekoBox',  url=f'sn://subscription?url={enc}'),
+        ],
+        # iOS
+        [InlineKeyboardButton(text='━━━ iOS ━━━', callback_data='noop')],
+        [
+            InlineKeyboardButton(text='Streisand',    url=f'streisand://import/{enc}'),
+            InlineKeyboardButton(text='Sing-box',     url=f'sing-box://import-remote-profile?url={enc}'),
+            InlineKeyboardButton(text='Shadowrocket', url=f'shadowrocket://add/sub?url={b64}'),
+        ],
+        # Windows / Mac — deep links не работают, нужна ручная вставка
+        [InlineKeyboardButton(text='━━━ Windows / Mac ━━━', callback_data='noop')],
+        [InlineKeyboardButton(
+            text='📋 Скопировать ссылку (Win/Mac)',
+            callback_data='copy_url'
+        )],
+        [InlineKeyboardButton(text='« Назад', callback_data='my_vpn')],
+    ])
+
+
+@dp.callback_query(F.data == 'noop')
+async def handle_noop(callback: types.CallbackQuery):
+    """Заглушка для кнопок-разделителей"""
+    await callback.answer()
+
+
+@dp.callback_query(F.data == 'get_url')
+async def handle_get_url(callback: types.CallbackQuery):
+    """Меню выбора приложения для подключения"""
+    sub = await db_manager.get_active_subscription(callback.from_user.id)
+    if not sub or not sub.get('subscription_url'):
+        await callback.answer("⚠️ Ссылка недоступна", show_alert=True)
+        return
+
+    text = (
+        "📱 *Выберите приложение*\n\n"
+        "Нажмите на нужное — подписка добавится автоматически\n\n"
+        "_Для Windows/Mac скопируйте ссылку и вставьте в приложение вручную_"
+    )
+    await callback.message.edit_text(
+        text,
+        parse_mode='Markdown',
+        reply_markup=_app_buttons(sub['subscription_url'])
+    )
+
+
+@dp.callback_query(F.data == 'copy_url')
+async def handle_copy_url(callback: types.CallbackQuery):
+    """Отправляет ссылку отдельным сообщением — удобно скопировать на десктопе"""
+    sub = await db_manager.get_active_subscription(callback.from_user.id)
+    if not sub or not sub.get('subscription_url'):
+        await callback.answer("⚠️ Ссылка недоступна", show_alert=True)
+        return
+    await callback.message.answer(
+        f"`{sub['subscription_url']}`",
+        parse_mode='Markdown'
+    )
+    await callback.answer("✅ Ссылка отправлена выше")
 
 
 @dp.callback_query(F.data == 'howto')

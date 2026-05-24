@@ -1,10 +1,13 @@
 """
-TrankVPN Web — лендинг и информационные страницы сервиса
+TrankVPN Web — лендинг + прокси подписок Marzban
+Подписки отдаются через наш домен, скрывая адрес Marzban-сервера
 """
 
 import os
-from fastapi import FastAPI, Request, HTTPException
-from fastapi.responses import HTMLResponse, JSONResponse
+import re
+import httpx
+from fastapi import FastAPI, HTTPException
+from fastapi.responses import HTMLResponse, JSONResponse, Response
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -13,6 +16,7 @@ app = FastAPI(title="TrankVPN Web")
 
 BOT_USERNAME = os.getenv('BOT_USERNAME', 'TrankVPNbot')
 SUPPORT_USERNAME = os.getenv('SUPPORT_USERNAME', 'support')
+MARZBAN_URL = os.getenv('MARZBAN_URL', '').rstrip('/')
 
 
 LANDING_HTML = """<!DOCTYPE html>
@@ -46,11 +50,7 @@ LANDING_HTML = """<!DOCTYPE html>
         .logo { font-size: 56px; margin-bottom: 8px; }
         h1 { font-size: 28px; font-weight: 700; color: #fff; margin-bottom: 8px; }
         .tagline { color: #8888aa; font-size: 16px; margin-bottom: 36px; }
-        .features {
-            list-style: none;
-            margin-bottom: 36px;
-            text-align: left;
-        }
+        .features { list-style: none; margin-bottom: 36px; text-align: left; }
         .features li {
             padding: 8px 0;
             color: #c0c0d8;
@@ -73,11 +73,7 @@ LANDING_HTML = """<!DOCTYPE html>
             width: 100%;
         }
         .btn:hover { background: #2979d9; }
-        .footer {
-            margin-top: 24px;
-            color: #555570;
-            font-size: 13px;
-        }
+        .footer { margin-top: 24px; color: #555570; font-size: 13px; }
         .footer a { color: #5e9aff; text-decoration: none; }
     </style>
 </head>
@@ -86,7 +82,6 @@ LANDING_HTML = """<!DOCTYPE html>
         <div class="logo">🔒</div>
         <h1>TrankVPN</h1>
         <p class="tagline">Быстрый · Безопасный · Надёжный</p>
-
         <ul class="features">
             <li>Работает во всех странах</li>
             <li>Android, iOS, Windows, Mac</li>
@@ -94,11 +89,7 @@ LANDING_HTML = """<!DOCTYPE html>
             <li>Мгновенная активация</li>
             <li>Оплата в USDT / TON</li>
         </ul>
-
-        <a class="btn" href="https://t.me/{bot_username}">
-            ✈️ Открыть в Telegram
-        </a>
-
+        <a class="btn" href="https://t.me/{bot_username}">✈️ Открыть в Telegram</a>
         <div class="footer">
             Поддержка: <a href="https://t.me/{support}">@{support}</a>
         </div>
@@ -109,8 +100,43 @@ LANDING_HTML = """<!DOCTYPE html>
 
 @app.get("/", response_class=HTMLResponse)
 async def index():
-    html = LANDING_HTML.replace('{bot_username}', BOT_USERNAME).replace('{support}', SUPPORT_USERNAME)
+    html = LANDING_HTML \
+        .replace('{bot_username}', BOT_USERNAME) \
+        .replace('{support}', SUPPORT_USERNAME)
     return HTMLResponse(content=html)
+
+
+@app.get("/sub/{token}")
+async def proxy_subscription(token: str):
+    """
+    Проксирует подписку с Marzban через наш домен.
+    Клиент видит только наш домен — адрес Marzban скрыт.
+    """
+    if not MARZBAN_URL:
+        raise HTTPException(status_code=503, detail="VPN service unavailable")
+
+    # Токен должен быть безопасной строкой (буквы, цифры, дефис, подчёркивание)
+    if not re.match(r'^[a-zA-Z0-9_\-]{8,128}$', token):
+        raise HTTPException(status_code=400, detail="Invalid token")
+
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            resp = await client.get(
+                f"{MARZBAN_URL}/sub/{token}",
+                headers={"User-Agent": "TrankVPN-Proxy/1.0"},
+                follow_redirects=True,
+            )
+            if resp.status_code == 404:
+                raise HTTPException(status_code=404, detail="Subscription not found")
+            resp.raise_for_status()
+
+            content_type = resp.headers.get("content-type", "text/plain; charset=utf-8")
+            return Response(content=resp.content, media_type=content_type)
+
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(status_code=502, detail="Upstream error")
 
 
 @app.get("/health")

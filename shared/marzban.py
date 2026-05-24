@@ -5,11 +5,28 @@
 
 import httpx
 import os
+import re
 import time
 import logging
 from typing import Optional, Dict
 
 logger = logging.getLogger(__name__)
+
+
+def _rewrite_sub_url(marzban_sub_url: str) -> str:
+    """
+    Заменяет хост Marzban на наш домен в ссылке подписки.
+    Например: https://panel.myserver.com:8000/sub/TOKEN → https://vpn.mydomain.com/sub/TOKEN
+    Если DOMAIN не задан — возвращает оригинальный URL.
+    """
+    domain = os.getenv('DOMAIN', '').strip()
+    if not domain:
+        return marzban_sub_url
+    match = re.search(r'/sub/([a-zA-Z0-9_\-]+)', marzban_sub_url)
+    if not match:
+        return marzban_sub_url
+    token = match.group(1)
+    return f"https://{domain}/sub/{token}"
 
 
 class MarzbanAPI:
@@ -65,9 +82,14 @@ class MarzbanAPI:
                 )
                 if resp.status_code == 409:
                     # Пользователь уже существует — обновляем его
-                    return await self._reset_and_get_user(username, expire_ts, data_limit)
-                resp.raise_for_status()
-                return resp.json()
+                    result = await self._reset_and_get_user(username, expire_ts, data_limit)
+                else:
+                    resp.raise_for_status()
+                    result = resp.json()
+
+                if result and result.get('subscription_url'):
+                    result['subscription_url'] = _rewrite_sub_url(result['subscription_url'])
+                return result
         except Exception as e:
             logger.error(f"Marzban create_user error for tg{telegram_id}: {e}")
             return None

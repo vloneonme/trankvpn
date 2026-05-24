@@ -59,6 +59,8 @@ services:
       - DB_PASS=${DB_PASS}
       - DB_NAME=${DB_NAME:-vpn_service}
       - REDIS_HOST=redis
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     depends_on:
       mariadb:
         condition: service_healthy
@@ -105,6 +107,8 @@ services:
       - DB_USER=${DB_USER:-vpn_user}
       - DB_PASS=${DB_PASS}
       - DB_NAME=${DB_NAME:-vpn_service}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     depends_on:
       mariadb:
         condition: service_healthy
