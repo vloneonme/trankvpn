@@ -1,63 +1,177 @@
 ---
-# Ansible Playbook для развертывания VPN сервиса
-# Использование: ansible-playbook -i inventory.ini deploy.yml
+# TrankVPN — Ansible Playbook
+# Устанавливает Docker (официальный), Git, клонирует репозиторий и запускает сервис
+#
+# Использование:
+#   ansible-playbook -i inventory.ini deploy.yml
+#
+# С параметрами:
+#   ansible-playbook -i inventory.ini deploy.yml \
+#     -e "repo_url=git@github.com:vloneonme/trankvpn.git" \
+#     -e "setup_backup=true"
 
-- name: Deploy VPN Service
+- name: TrankVPN Deploy
   hosts: vpn_servers
   become: yes
+
   vars:
-    project_name: vpn-service
-    project_dir: /opt/vpn-service
-    docker_compose_url: https://github.com/docker/compose/releases/latest/download/docker-compose-linux-x86_64
-    
+    project_dir: /opt/trankvpn
+    repo_url: "git@github.com:vloneonme/trankvpn.git"
+    repo_branch: main
+
   tasks:
-    # === Предварительные требования ===
-    - name: Update apt cache
+
+    # =========================================================
+    # 1. Системные пакеты
+    # =========================================================
+
+    - name: Обновить apt cache
       apt:
         update_cache: yes
         cache_valid_time: 3600
 
-    - name: Install required packages
+    - name: Установить базовые пакеты
       apt:
         name:
-          - docker.io
-          - docker-compose
-          - python3-pip
           - git
           - curl
+          - ca-certificates
+          - gnupg
           - openssl
+          - python3-pip
         state: present
 
-    - name: Start Docker service
+    # =========================================================
+    # 2. Docker — официальный репозиторий
+    #    (не docker.io из Ubuntu — он устаревший)
+    # =========================================================
+
+    - name: Создать директорию для ключей apt
+      file:
+        path: /etc/apt/keyrings
+        state: directory
+        mode: '0755'
+
+    - name: Скачать GPG-ключ Docker
+      shell: |
+        curl -fsSL https://download.docker.com/linux/ubuntu/gpg \
+          | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+        chmod a+r /etc/apt/keyrings/docker.gpg
+      args:
+        creates: /etc/apt/keyrings/docker.gpg
+
+    - name: Добавить репозиторий Docker
+      shell: |
+        echo \
+          "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] \
+          https://download.docker.com/linux/ubuntu \
+          $(. /etc/os-release && echo "$VERSION_CODENAME") stable" \
+          > /etc/apt/sources.list.d/docker.list
+      args:
+        creates: /etc/apt/sources.list.d/docker.list
+
+    - name: Обновить apt после добавления репозитория Docker
+      apt:
+        update_cache: yes
+
+    - name: Установить Docker Engine и плагин Compose
+      apt:
+        name:
+          - docker-ce
+          - docker-ce-cli
+          - containerd.io
+          - docker-buildx-plugin
+          - docker-compose-plugin   # "docker compose" (v2), не docker-compose (v1)
+        state: present
+
+    - name: Запустить и включить Docker
       systemd:
         name: docker
         state: started
         enabled: yes
 
-    # === Клонирование репозитория ===
-    - name: Clone repository
-      git:
-        repo: "{{ repo_url | default('https://github.com/yourusername/vpn-service.git') }}"
-        dest: "{{ project_dir }}"
-        version: main
-        force: yes
-
-    # === Генерация секретов ===
-    - name: Generate encryption key
-      shell: openssl rand -base64 32
-      register: encryption_key
+    - name: Проверить что Docker работает
+      command: docker version
       changed_when: false
+      register: docker_version
 
-    - name: Create .env file
-      template:
-        src: templates/env.j2
-        dest: "{{ project_dir }}/docker/.env"
+    - name: Показать версию Docker
+      debug:
+        msg: "{{ docker_version.stdout_lines[0] }}"
+
+    # =========================================================
+    # 3. Клонирование репозитория
+    # =========================================================
+
+    - name: Создать директорию проекта
+      file:
+        path: "{{ project_dir }}"
+        state: directory
+        mode: '0755'
+
+    - name: Исправить права на SSH-ключ (должно быть 600, иначе SSH игнорирует)
+      file:
+        path: /root/.ssh/id_rsa
         mode: '0600'
-      vars:
-        enc_key: "{{ encryption_key.stdout }}"
 
-    # === Создание директорий ===
-    - name: Create data directories
+    - name: Клонировать репозиторий
+      git:
+        repo: "{{ repo_url }}"
+        dest: "{{ project_dir }}"
+        version: "{{ repo_branch }}"
+        force: yes
+        accept_hostkey: yes   # автоматически принять fingerprint GitHub
+
+    # =========================================================
+    # 4. Конфигурация (.env)
+    # =========================================================
+
+    - name: Проверить наличие .env
+      stat:
+        path: "{{ project_dir }}/docker/.env"
+      register: env_file
+
+    - name: Сгенерировать ENCRYPTION_KEY
+      shell: python3 -c "import secrets, base64; print(base64.urlsafe_b64encode(secrets.token_bytes(32)).decode())"
+      register: generated_key
+      changed_when: false
+      when: not env_file.stat.exists
+
+    - name: Создать .env из шаблона (если ещё нет)
+      copy:
+        src: "{{ project_dir }}/docker/.env.example"
+        dest: "{{ project_dir }}/docker/.env"
+        remote_src: yes
+        mode: '0600'
+      when: not env_file.stat.exists
+
+    - name: Вставить сгенерированный ENCRYPTION_KEY в .env
+      lineinfile:
+        path: "{{ project_dir }}/docker/.env"
+        regexp: '^ENCRYPTION_KEY='
+        line: "ENCRYPTION_KEY={{ generated_key.stdout }}"
+      when: not env_file.stat.exists
+
+    - name: Напомнить заполнить .env
+      debug:
+        msg: |
+          ============================================================
+          ВАЖНО: Заполните {{ project_dir }}/docker/.env:
+            BOT_TOKEN=...
+            CRYPTO_BOT_TOKEN=...
+            DB_PASS=...
+            MYSQL_ROOT_PASSWORD=...
+            MARZBAN_URL=...
+            MARZBAN_ADMIN=...
+            MARZBAN_PASS=...
+          ============================================================
+      when: not env_file.stat.exists
+
+    # =========================================================
+    # 5. Директории для данных
+    # =========================================================
+
+    - name: Создать директории для данных
       file:
         path: "{{ item }}"
         state: directory
@@ -69,48 +183,17 @@
         - /var/lib/vpn-service/caddy-config
         - /var/log/vpn-service/bot
 
-    # === Развертывание ===
-    - name: Deploy with Docker Compose
-      community.docker.docker_compose:
-        project_src: "{{ project_dir }}/docker"
-        files:
-          - docker-compose.yml
-        state: present
-        build: yes
-        pull: no
-        restart: yes
+    # =========================================================
+    # 6. Итог
+    # =========================================================
 
-    # === Настройка автозапуска ===
-    - name: Enable Docker auto-start
-      systemd:
-        name: docker
-        enabled: yes
-
-    # === Проверка статуса ===
-    - name: Check services status
-      command: docker-compose ps
-      args:
-        chdir: "{{ project_dir }}/docker"
-      register: compose_status
-      changed_when: false
-
-    - name: Display status
+    - name: Готово — следующие шаги
       debug:
-        var: compose_status.stdout_lines
-
-    # === Бэкап (опционально) ===
-    - name: Setup backup cron job
-      cron:
-        name: "VPN Service Backup"
-        minute: "0"
-        hour: "3"
-        job: "cd {{ project_dir }}/scripts && ./backup.sh >> /var/log/vpn-service/backup.log 2>&1"
-      when: setup_backup | default(false)
-
-  handlers:
-    - name: Restart Docker
-      systemd:
-        name: docker
-        state: restarted
-
-```
+        msg:
+          - "✅ Docker, Git установлены"
+          - "✅ Репозиторий склонирован в {{ project_dir }}"
+          - "✅ Директории для данных созданы"
+          - ""
+          - "👉 Дальше на сервере:"
+          - "   1. nano {{ project_dir }}/docker/.env  — заполните все переменные"
+          - "   2. cd {{ project_dir }}/docker && docker compose up -d --build"
