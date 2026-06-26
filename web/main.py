@@ -5,12 +5,18 @@ TrankVPN Web — лендинг + прокси подписок Marzban
 
 import os
 import re
+import base64
+import logging
 import httpx
+from urllib.parse import quote
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import HTMLResponse, JSONResponse, Response
+from fastapi.responses import HTMLResponse, JSONResponse, Response, RedirectResponse
 from dotenv import load_dotenv
 
 load_dotenv()
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("trankvpn-web")
 
 app = FastAPI(title="TrankVPN Web")
 
@@ -120,7 +126,9 @@ async def proxy_subscription(token: str):
         raise HTTPException(status_code=400, detail="Invalid token")
 
     try:
-        async with httpx.AsyncClient(timeout=15) as client:
+        # Marzban отдаёт HTTPS с самоподписанным сертификатом — проверку отключаем
+        # (так же, как в shared/marzban.py)
+        async with httpx.AsyncClient(timeout=15, verify=False) as client:
             resp = await client.get(
                 f"{MARZBAN_URL}/sub/{token}",
                 headers={"User-Agent": "TrankVPN-Proxy/1.0"},
@@ -135,8 +143,47 @@ async def proxy_subscription(token: str):
 
     except HTTPException:
         raise
-    except Exception:
+    except Exception as e:
+        logger.error("Subscription upstream error for token %s: %r", token, e)
         raise HTTPException(status_code=502, detail="Upstream error")
+
+
+# Шаблоны deep-link'ов VPN-приложений. {url} — подписка (url-encoded),
+# {raw} — подписка как есть, {b64} — подписка в base64 (для Shadowrocket).
+APP_DEEPLINKS = {
+    'happ':         'happ://add/{raw}',
+    'v2rayng':      'v2rayng://install-config?url={url}',
+    'hiddify':      'hiddify://import/{url}',
+    'nekobox':      'sn://subscription?url={url}',
+    'streisand':    'streisand://import/{url}',
+    'singbox':      'sing-box://import-remote-profile?url={url}',
+    'shadowrocket': 'shadowrocket://add/sub?url={b64}',
+}
+
+
+@app.get("/import/{app_id}")
+async def import_redirect(app_id: str, url: str):
+    """
+    Редирект на deep-link VPN-приложения.
+
+    Telegram запрещает кастомные URL-схемы (v2rayng://, hiddify:// и т.п.)
+    на inline-кнопках, поэтому кнопка ведёт на этот https-эндпоинт,
+    а он уже редиректит на схему приложения.
+    """
+    template = APP_DEEPLINKS.get(app_id)
+    if not template:
+        raise HTTPException(status_code=404, detail="Unknown app")
+
+    # Принимаем только наши же ссылки на подписку
+    if not re.match(r'^https?://[\w.\-]+/sub/[a-zA-Z0-9_\-]{8,128}$', url):
+        raise HTTPException(status_code=400, detail="Invalid subscription url")
+
+    deep_link = template.format(
+        url=quote(url, safe=''),
+        raw=url,
+        b64=base64.b64encode(url.encode()).decode(),
+    )
+    return RedirectResponse(deep_link, status_code=302)
 
 
 @app.get("/health")

@@ -2,10 +2,10 @@
 # Замените your-domain.com на ваш реальный домен
 
 {
-    email admin@your-domain.com
+    email admin@vpn.trvnq.uk
 }
 
-your-domain.com {
+vpn.trvnq.uk {
     # Веб-приложение (инструкции, статус)
     reverse_proxy /app/* localhost:8080
 

@@ -40,7 +40,7 @@ class MarzbanAPI:
     async def _get_token(self) -> str:
         if self._token and time.time() < self._token_expiry:
             return self._token
-        async with httpx.AsyncClient(timeout=10) as client:
+        async with httpx.AsyncClient(timeout=10, verify=False) as client:
             resp = await client.post(
                 f"{self.base_url}/api/admin/token",
                 data={"username": self.username, "password": self.password},
@@ -63,10 +63,9 @@ class MarzbanAPI:
 
             payload = {
                 "username": username,
-                "proxies": {"vless": {}, "vmess": {}},
+                "proxies": {"vless": {"flow": ""}},
                 "inbounds": {
-                    "vless": ["VLESS TCP REALITY"],
-                    "vmess": ["VMess TCP"]
+                    "vless": ["VLESS TCP REALITY", "VLESS GRPC REALITY"]
                 },
                 "expire": expire_ts,
                 "data_limit": data_limit,
@@ -74,7 +73,7 @@ class MarzbanAPI:
                 "status": "active"
             }
 
-            async with httpx.AsyncClient(timeout=15) as client:
+            async with httpx.AsyncClient(timeout=15, verify=False) as client:
                 resp = await client.post(
                     f"{self.base_url}/api/user",
                     json=payload,
@@ -97,7 +96,7 @@ class MarzbanAPI:
     async def _reset_and_get_user(self, username: str,
                                    expire_ts: int, data_limit: int) -> Optional[Dict]:
         try:
-            async with httpx.AsyncClient(timeout=10) as client:
+            async with httpx.AsyncClient(timeout=10, verify=False) as client:
                 resp = await client.put(
                     f"{self.base_url}/api/user/{username}",
                     json={"expire": expire_ts, "data_limit": data_limit, "status": "active"},
@@ -111,7 +110,7 @@ class MarzbanAPI:
 
     async def get_user(self, username: str) -> Optional[Dict]:
         try:
-            async with httpx.AsyncClient(timeout=10) as client:
+            async with httpx.AsyncClient(timeout=10, verify=False) as client:
                 resp = await client.get(
                     f"{self.base_url}/api/user/{username}",
                     headers=await self._headers(),
@@ -133,7 +132,7 @@ class MarzbanAPI:
             current_expire = user.get('expire') or int(time.time())
             new_expire = max(int(time.time()), current_expire) + (additional_days * 86400)
 
-            async with httpx.AsyncClient(timeout=10) as client:
+            async with httpx.AsyncClient(timeout=10, verify=False) as client:
                 resp = await client.put(
                     f"{self.base_url}/api/user/{username}",
                     json={"expire": new_expire, "status": "active"},

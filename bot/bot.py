@@ -7,8 +7,7 @@ import os
 import asyncio
 import logging
 import datetime
-import base64
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
@@ -329,13 +328,13 @@ async def handle_plan_select(callback: types.CallbackQuery):
         f"Тариф: {plan['emoji']} {plan['name']}\n"
         f"Сумма: *{plan['price_usdt']} USDT*\n"
         f"Номер счёта: `{invoice_id}`\n\n"
-        f"1\\. Нажмите *Оплатить в CryptoBot*\n"
-        f"2\\. Оплатите через @CryptoBot\n"
-        f"3\\. Вернитесь и нажмите *Я оплатил*\n\n"
+        f"1. Нажмите *Оплатить в CryptoBot*\n"
+        f"2. Оплатите через @CryptoBot\n"
+        f"3. Вернитесь и нажмите *Я оплатил*\n\n"
         f"⏱ Счёт действителен 1 час"
     )
     await callback.message.edit_text(
-        text, parse_mode='MarkdownV2',
+        text, parse_mode='Markdown',
         reply_markup=kb_payment(invoice_id, pay_url)
     )
     logger.info(f"💰 Invoice #{invoice_id} created for tg{tg_id} plan={plan_id}")
@@ -460,73 +459,40 @@ async def handle_status(callback: types.CallbackQuery):
 
 
 def _app_buttons(sub_url: str) -> InlineKeyboardMarkup:
-    """Кнопки для открытия подписки в конкретных приложениях через deep links"""
+    """Кнопка добавления подписки сразу в Happ.
+
+    Telegram запрещает кастомные URL-схемы (happ:// и т.п.) на inline-кнопках,
+    поэтому кнопка ведёт на https-редирект нашего web-сервиса (/import/happ),
+    который уже перенаправляет на схему приложения.
+    """
     enc = quote(sub_url, safe='')
-    b64 = base64.b64encode(sub_url.encode()).decode()  # для Shadowrocket
+    parts = urlsplit(sub_url)
+    web_base = f'{parts.scheme}://{parts.netloc}'
 
     return InlineKeyboardMarkup(inline_keyboard=[
-        # Android
-        [InlineKeyboardButton(text='━━━ Android ━━━', callback_data='noop')],
-        [
-            InlineKeyboardButton(text='v2rayNG', url=f'v2rayng://install-config?url={enc}'),
-            InlineKeyboardButton(text='Hiddify',  url=f'hiddify://import/{enc}'),
-            InlineKeyboardButton(text='NekoBox',  url=f'sn://subscription?url={enc}'),
-        ],
-        # iOS
-        [InlineKeyboardButton(text='━━━ iOS ━━━', callback_data='noop')],
-        [
-            InlineKeyboardButton(text='Streisand',    url=f'streisand://import/{enc}'),
-            InlineKeyboardButton(text='Sing-box',     url=f'sing-box://import-remote-profile?url={enc}'),
-            InlineKeyboardButton(text='Shadowrocket', url=f'shadowrocket://add/sub?url={b64}'),
-        ],
-        # Windows / Mac — deep links не работают, нужна ручная вставка
-        [InlineKeyboardButton(text='━━━ Windows / Mac ━━━', callback_data='noop')],
-        [InlineKeyboardButton(
-            text='📋 Скопировать ссылку (Win/Mac)',
-            callback_data='copy_url'
-        )],
+        [InlineKeyboardButton(text='➕ Добавить в Happ', url=f'{web_base}/import/happ?url={enc}')],
         [InlineKeyboardButton(text='« Назад', callback_data='my_vpn')],
     ])
 
 
-@dp.callback_query(F.data == 'noop')
-async def handle_noop(callback: types.CallbackQuery):
-    """Заглушка для кнопок-разделителей"""
-    await callback.answer()
-
-
 @dp.callback_query(F.data == 'get_url')
 async def handle_get_url(callback: types.CallbackQuery):
-    """Меню выбора приложения для подключения"""
+    """Добавление подписки в Happ"""
     sub = await db_manager.get_active_subscription(callback.from_user.id)
     if not sub or not sub.get('subscription_url'):
         await callback.answer("⚠️ Ссылка недоступна", show_alert=True)
         return
 
     text = (
-        "📱 *Выберите приложение*\n\n"
-        "Нажмите на нужное — подписка добавится автоматически\n\n"
-        "_Для Windows/Mac скопируйте ссылку и вставьте в приложение вручную_"
+        "📱 *Подключение*\n\n"
+        "Нажмите *➕ Добавить в Happ* — подписка добавится в приложение автоматически\n\n"
+        "_Нет приложения? Установите Happ из App Store / Google Play_"
     )
     await callback.message.edit_text(
         text,
         parse_mode='Markdown',
         reply_markup=_app_buttons(sub['subscription_url'])
     )
-
-
-@dp.callback_query(F.data == 'copy_url')
-async def handle_copy_url(callback: types.CallbackQuery):
-    """Отправляет ссылку отдельным сообщением — удобно скопировать на десктопе"""
-    sub = await db_manager.get_active_subscription(callback.from_user.id)
-    if not sub or not sub.get('subscription_url'):
-        await callback.answer("⚠️ Ссылка недоступна", show_alert=True)
-        return
-    await callback.message.answer(
-        f"`{sub['subscription_url']}`",
-        parse_mode='Markdown'
-    )
-    await callback.answer("✅ Ссылка отправлена выше")
 
 
 @dp.callback_query(F.data == 'howto')

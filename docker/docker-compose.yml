@@ -10,6 +10,10 @@ services:
       SQLALCHEMY_DATABASE_URL: mysql+pymysql://root:${MYSQL_ROOT_PASSWORD}@mariadb/marzban_db
       UVICORN_HOST: "0.0.0.0"
       UVICORN_PORT: "8000"
+      UVICORN_SSL_CERTFILE: "/var/lib/marzban/cert.pem"
+      UVICORN_SSL_KEYFILE: "/var/lib/marzban/key.pem"
+      UVICORN_SSL_CA_TYPE: "private"
+      XRAY_JSON: "/var/lib/marzban/xray_config.json"
     depends_on:
       mariadb:
         condition: service_healthy
@@ -17,10 +21,16 @@ services:
       - vpn-network
     ports:
       - "127.0.0.1:8000:8000"  # Marzban panel (SSH tunnel для доступа)
-      - "8443:8443"             # VLESS REALITY — настроить в Marzban → Xray Config
-      - "2083:2083"             # VMess — настроить в Marzban → Xray Config
+      - "8443:8443"             # VLESS TCP REALITY
+      - "2053:2053"             # VLESS GRPC REALITY
     volumes:
       - /var/lib/marzban:/var/lib/marzban
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request, ssl; urllib.request.urlopen('https://localhost:8000/', context=ssl._create_unverified_context())"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
 
 
   # === MariaDB - База данных ===
@@ -41,6 +51,7 @@ services:
       - --innodb-buffer-pool-size=256M
     volumes:
       - /var/lib/vpn-service/mysql:/var/lib/mysql
+      - ./mysql-init/create-marzban-db.sql:/docker-entrypoint-initdb.d/create-marzban-db.sql:ro
     networks:
       - vpn-network
     healthcheck:
@@ -87,6 +98,8 @@ services:
       mariadb:
         condition: service_healthy
       redis:
+        condition: service_healthy
+      marzban:
         condition: service_healthy
     networks:
       - vpn-network

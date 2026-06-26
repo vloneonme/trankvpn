@@ -1,4 +1,3 @@
-```
 # Dependencies
 __pycache__/
 *.pyc
@@ -39,4 +38,6 @@ htmlcov/
 dist/
 build/
 target/
-```
+
+# Xray config — contains REALITY private key
+configs/xray_config.json
