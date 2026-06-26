@@ -1,6 +1,28 @@
 version: '3.8'
 
 services:
+  marzban:
+    image: gozargah/marzban:latest
+    container_name: vpn-marzban
+    restart: always
+    env_file: .env
+    environment:
+      SQLALCHEMY_DATABASE_URL: mysql+pymysql://root:${MYSQL_ROOT_PASSWORD}@mariadb/marzban_db
+      UVICORN_HOST: "0.0.0.0"
+      UVICORN_PORT: "8000"
+    depends_on:
+      mariadb:
+        condition: service_healthy
+    networks:
+      - vpn-network
+    ports:
+      - "127.0.0.1:8000:8000"  # Marzban panel (SSH tunnel для доступа)
+      - "8443:8443"             # VLESS REALITY — настроить в Marzban → Xray Config
+      - "2083:2083"             # VMess — настроить в Marzban → Xray Config
+    volumes:
+      - /var/lib/marzban:/var/lib/marzban
+
+
   # === MariaDB - База данных ===
   mariadb:
     image: mariadb:lts

@@ -7,13 +7,13 @@
 
 your-domain.com {
     # Веб-приложение (инструкции, статус)
-    reverse_proxy /app/* vpn-web:8080
+    reverse_proxy /app/* localhost:8080
 
     # API для веб-приложения
-    reverse_proxy /api/* vpn-web:8080
+    reverse_proxy /api/* localhost:8080
 
     # Главная страница
-    reverse_proxy vpn-web:8080
+    reverse_proxy localhost:8080
 
     # Безопасные заголовки
     header {
